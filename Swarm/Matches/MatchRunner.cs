@@ -9,6 +9,7 @@ using ColiseeSharp.Swarm.Docker;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Ninject.Infrastructure.Language;
+using ICSharpCode.SharpZipLib.Tar; 
 
 namespace ColiseeSharp.Swarm.Matches {
     public class MatchRunner : IMatchRunner {
@@ -84,6 +85,7 @@ namespace ColiseeSharp.Swarm.Matches {
             string remoteTag = this._registry.GetRemoteImageName(localTag);
 
             // Build the image for the client
+            // This is just building an image and returning a stream of that image I think.
             this._logger.Log($"Building new client image: {remoteTag}", LogLevel.Debug);
             cancellationToken.ThrowIfCancellationRequested();
             Stream image = await this._docker.Images.BuildImageFromDockerfileAsync(client.Source, new ImageBuildParameters {
@@ -91,24 +93,42 @@ namespace ColiseeSharp.Swarm.Matches {
                 Labels = new Dictionary<string, string> {
                     { "arena.client.name", client.Name }
                 },
-                Dockerfile = "joueur-cs/Dockerfile"
             }, cancellationToken);
+            
+            // Compressing the image given back from the build to a .tar so we can pass it back to docker.
+            this._logger.Log($"Compressing", LogLevel.Debug);
+            FileStream imageFile = File.Create("./client");
+            image.CopyTo(imageFile);
+            imageFile.Close();
+            Stream outImage = new MemoryStream();
+            TarOutputStream tarImageStream = new TarOutputStream(outImage);
+            TarEntry tarItem = TarEntry.CreateEntryFromFile("./client");
+            tarImageStream.PutNextEntry(tarItem);
 
             // Create the image
-            // this._logger.Log($"Creating client image: {remoteTag}", LogLevel.Debug);
-            // cancellationToken.ThrowIfCancellationRequested();
-            // await this._docker.Images.CreateImageAsync(new ImagesCreateParameters {
-            //     Repo = remoteTag
-            // }, image, null, new Progress<JSONMessage>(message => this._logger.Log($"Progress on creating {remoteTag}: {message.ProgressMessage}", LogLevel.Debug)), cancellationToken);
+            // Creating the image so that it actually shows up as a docker image.
+            // If you do docker image ls -a the image should now show.
+            // FromSrc = "-" means from the stream we give.
+            // Tag is the tag we want it to have.
+            this._logger.Log($"Creating client image: {remoteTag}", LogLevel.Debug);
+            cancellationToken.ThrowIfCancellationRequested();
+            await this._docker.Images.CreateImageAsync(new ImagesCreateParameters {
+                FromSrc = "-",
+                Tag = "latest"
+            }, outImage, null, new Progress<JSONMessage>(message => this._logger.Log($"Progress on creating {remoteTag}: {message.ProgressMessage}", LogLevel.Debug)), cancellationToken);
+            // Clean up the temp file I created for doing the wierd shit to make it work.
+            File.Delete("./client");
 
             // Push the new image to the registry
             this._logger.Log($"Pushing client image {localTag} to {this._registry.ServerUri}", LogLevel.Debug);
             cancellationToken.ThrowIfCancellationRequested();
-            await this._docker.Images.PushImageAsync(remoteTag, new ImagePushParameters {
-                Tag = localTag
+            // The name should be repo/name.
+            // Then we have the tag of it in the params
+            await this._docker.Images.PushImageAsync($"{this._registry.ServerUri}/{client.Name}", new ImagePushParameters {
+                Tag = "latest"
             }, new AuthConfig {
                 ServerAddress = this._registry.ServerUri.ToString()
-            }, null, cancellationToken);
+            }, new Progress<JSONMessage>(message => this._logger.Log($"Progress on creating {remoteTag}: {message.ProgressMessage}", LogLevel.Debug)), cancellationToken);
 
             // Create the service for the current client
             this._logger.Log($"Creating service for {remoteTag}", LogLevel.Debug);
