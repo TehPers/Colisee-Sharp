@@ -96,7 +96,8 @@ namespace ColiseeSharp.Swarm {
                     };
 
                     this._logger.Log("Running sample match", LogLevel.Debug);
-                    await matchRunner.RunMatch(clients, "Newtonian", new Uri("localhost:5000"));
+                    Uri address = new UriBuilder{Host = "172.17.0.1", Port = 3000}.Uri;
+                    await matchRunner.RunMatch(clients, "Newtonian",address);
                 }
             }
         }

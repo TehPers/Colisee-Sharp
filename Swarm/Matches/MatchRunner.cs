@@ -29,6 +29,7 @@ namespace ColiseeSharp.Swarm.Matches {
 
         public async Task<IMatchResult> RunMatch(IEnumerable<IGameClient> clients, string game, Uri gameServer, CancellationToken cancellationToken = default) {
             string session = $"arena-{Interlocked.Increment(ref this._curSessionId)}";
+            this._logger.Log(gameServer.Port.ToString(), LogLevel.Debug);
 
             // Create a linked token that is cancelled whenever either this object is disposed or the provided token is cancelled
             using (CancellationTokenSource tokenSource = CancellationTokenSource.CreateLinkedTokenSource(this._disposeTokenSource.Token, cancellationToken)) {
@@ -52,8 +53,14 @@ namespace ColiseeSharp.Swarm.Matches {
                 string p1Node = p1Task.NodeID;
                 this._logger.Log($"Running match on node {p1Node} between {string.Join(", ", clientsArray.Select(client => client.Name))}", LogLevel.Info);
 
+                this._logger.Log(clientsArray.Count().ToString(), LogLevel.Debug);
                 // Start the rest of the players
+                foreach (IGameClient client in clientsArray)
+                    this._logger.Log(client.Name, LogLevel.Debug);
+
                 foreach (IGameClient client in clientsArray) {
+                    this._logger.Log(client.Name, LogLevel.Debug);
+                    if(client == p1) continue;
                     clientServices.Add(await this.CreateClientService(client, game, gameServer, session, tokenSource.Token));
                 }
 
@@ -133,31 +140,28 @@ namespace ColiseeSharp.Swarm.Matches {
             // Create the service for the current client
             this._logger.Log($"Creating service for {remoteTag}", LogLevel.Debug);
             cancellationToken.ThrowIfCancellationRequested();
-            return await this._docker.CreateServiceAsync(new ServiceCreateParameters {
-                Service = new ServiceSpec {
-                    EndpointSpec = new EndpointSpec {
-                        Ports = new List<PortConfig> {
-                            new PortConfig {
-                                PublishedPort = 3080,
-                                TargetPort = 3080
-                            }
-                        }
-                    },
-                    TaskTemplate = new TaskSpec {
-                        ContainerSpec = new ContainerSpec {
-                            Image = remoteTag,
-                            Args = { game, "-s", server.Host, "-p", server.Port.ToString(), "-r", session }
+            return await this._docker.CreateServiceAsync(
+                new ServiceCreateParameters {
+                    Service = new ServiceSpec {
+                        Name = session + "-" +client.Name,
+                        Labels = new Dictionary<string, string> {
+                            {"arena.client.name", client.Name}
                         },
-                        RestartPolicy = new SwarmRestartPolicy {
-                            Condition = "none",
-                            MaxAttempts = 0
-                        }
-                    },
-                    Labels = new Dictionary<string, string> {
-                        { "arena.client.name", client.Name }
+                        TaskTemplate = new TaskSpec {
+                            Networks = new List<NetworkAttachmentConfig>() {
+                                new NetworkAttachmentConfig{Target = "arena_arena"}
+                            },
+                            ContainerSpec = new ContainerSpec {
+                                Image = remoteTag,
+                                Args = new List<string>{ game, "-s", server.Host, "-p", server.Port.ToString(), "-r", session }
+                            },
+                            RestartPolicy = new SwarmRestartPolicy {
+                                Condition = "none",
+                                MaxAttempts = 0
+                            }
+                        },
                     }
-                }
-            }, cancellationToken);
+                }, cancellationToken);
         }
 
         public void Dispose() {
