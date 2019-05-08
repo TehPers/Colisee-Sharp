@@ -44,6 +44,12 @@ namespace ColiseeSharp.Swarm.Matches {
                 DockerServiceManager p1 = await this.CreateClientService(clientsArray[0], game, gameServer, session, tokenSource.Token);
                 clientServices.Add(p1);
 
+                foreach(var task in p1.ListTasks().Result)
+                {
+                    this._logger.Log(task.Status.Message, LogLevel.Info);
+                    this._logger.Log(task.ID, LogLevel.Info);
+                }
+
                 // Get the node the client is running on
                 IList<TaskResponse> v = await this._docker.Tasks.ListAsync(tokenSource.Token);
                 foreach (TaskResponse task in v) {
@@ -53,16 +59,14 @@ namespace ColiseeSharp.Swarm.Matches {
                 string p1Node = p1Task.NodeID;
                 this._logger.Log($"Running match on node {p1Node} between {string.Join(", ", clientsArray.Select(client => client.Name))}", LogLevel.Info);
 
-                this._logger.Log(clientsArray.Count().ToString(), LogLevel.Debug);
-                // Start the rest of the players
-                foreach (IGameClient client in clientsArray)
-                    this._logger.Log(client.Name, LogLevel.Debug);
-
+                this._logger.Log(p1.Id,LogLevel.Debug);
+                /*
                 foreach (IGameClient client in clientsArray) {
                     this._logger.Log(client.Name, LogLevel.Debug);
-                    if(client == p1) continue;
+                    if(client == clientsArray[0]) continue;
                     clientServices.Add(await this.CreateClientService(client, game, gameServer, session, tokenSource.Token));
                 }
+                 */
 
                 // Wait until all clients have finished, checking every 30 seconds
                 while (!await this.CheckIfAllStopped(clientServices, tokenSource.Token)) {
@@ -87,6 +91,10 @@ namespace ColiseeSharp.Swarm.Matches {
         }
 
         private async Task<DockerServiceManager> CreateClientService(IGameClient client, string game, Uri server, string session, CancellationToken cancellationToken) {
+           return await CreateClientService(client, game, server, session, null, cancellationToken);
+        }
+
+        private async Task<DockerServiceManager> CreateClientService(IGameClient client, string game, Uri server, string session, string nodeID, CancellationToken cancellationToken) {
             // Get the remote image name for the current image
             string localTag = $"{client.Name}:latest";
             string remoteTag = this._registry.GetRemoteImageName(localTag);
@@ -143,17 +151,23 @@ namespace ColiseeSharp.Swarm.Matches {
             return await this._docker.CreateServiceAsync(
                 new ServiceCreateParameters {
                     Service = new ServiceSpec {
+                       /*
+                        */ 
+                        EndpointSpec = new EndpointSpec{
+                            Ports = new List<PortConfig> {new PortConfig{PublishMode="expose", TargetPort = 3000} }
+                        },
                         Name = session + "-" +client.Name,
                         Labels = new Dictionary<string, string> {
                             {"arena.client.name", client.Name}
                         },
                         TaskTemplate = new TaskSpec {
-                            Networks = new List<NetworkAttachmentConfig>() {
+                            Networks = new List<NetworkAttachmentConfig> {
                                 new NetworkAttachmentConfig{Target = "arena_arena"}
                             },
                             ContainerSpec = new ContainerSpec {
                                 Image = remoteTag,
-                                Args = new List<string>{ game, "-s", server.Host, "-p", server.Port.ToString(), "-r", session }
+                                Args = new List<string>{ game, "-s", server.Host, "-p", server.Port.ToString(), "-r", "bob" },
+
                             },
                             RestartPolicy = new SwarmRestartPolicy {
                                 Condition = "none",
